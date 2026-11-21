@@ -260,8 +260,12 @@ bool readSectionBody(const json& body, AcademicSection& section, bool preserveSt
 
 int main() {
     httplib::Server server;
-    std::filesystem::create_directories("data");
-    const std::string databasePath = "data/iu-smart-campus.db";
+    const char* configuredDatabasePath = std::getenv("IU_DATABASE_PATH");
+    const std::string databasePath = configuredDatabasePath && configuredDatabasePath[0]
+        ? configuredDatabasePath : "data/iu-smart-campus.db";
+    std::filesystem::path databaseFile(databasePath);
+    if (databaseFile.has_parent_path())
+        std::filesystem::create_directories(databaseFile.parent_path());
     sqlite3* database = nullptr;
     if (sqlite3_open(databasePath.c_str(), &database) != SQLITE_OK) {
         std::cerr << "Unable to open SQLite database\n";
@@ -862,7 +866,26 @@ int main() {
     registerNavigationRoutes(server, navigationRepository, repository, sessions);
     registerMapRoutes(server, mapRepository, repository, sessions);
 
-    std::cout << "IU Smart Campus API running at http://localhost:8080\n";
+    int port = 8080;
+    if (const char* configuredPort = std::getenv("PORT")) {
+        if (*configuredPort) {
+            char* end = nullptr;
+            const long parsedPort = std::strtol(configuredPort, &end, 10);
+            if (!end || *end || parsedPort < 1 || parsedPort > 65535) {
+                std::cerr << "PORT must be an integer between 1 and 65535\n";
+                sqlite3_close(database);
+                return 1;
+            }
+            port = static_cast<int>(parsedPort);
+        }
+    }
+
+    std::cout << "IU Smart Campus API listening on 0.0.0.0:" << port << "\n";
     std::cout << "GET /api/health\nGET /api/navigation/locations\nPOST /api/navigation/route\n";
-    server.listen("0.0.0.0", 8080);
+    if (!server.listen("0.0.0.0", port)) {
+        std::cerr << "Unable to start HTTP server on port " << port << "\n";
+        sqlite3_close(database);
+        return 1;
+    }
+    sqlite3_close(database);
 }
